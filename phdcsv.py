@@ -130,7 +130,7 @@ def pulse_guide():
     n = npulse + nguide
     # time, pr, pd, xr, xd, dither
     _index = {"time": 0, "pr":1, "pd":2, "xr":3,  "xd":4, "dither":5 }  
-    data = np.nan * np.ones(shape=(n,6))
+    data =  np.ones(shape=(n,6))
     data[:,0] = np.concatenate([pulse_time,guide_time])
     data[:npulse,1] = pr
     data[:npulse,2] = pd
