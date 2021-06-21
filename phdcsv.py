@@ -9,12 +9,11 @@ def ra_dec_data(n= 2945,filename = 'logs/cvastrophoto_guidelog_20200614T020302.t
   GUIDING_SECTION=False
   DITHER_SECTION = False
   DITHERING = False
-  #n= 2945
   m=2
   guiding_columns=[]
   time = np.zeros(n, dtype= float)
   guiding_data= np.zeros(shape= (n,m), dtype= float)
-  dither = np.zeros(shape= n) 
+  dither = np.zeros(n) 
   pulse= np.zeros(shape=(n,m),dtype= float)
   pulse_dir= np.zeros(shape=(n,m),dtype=str)
   dt=0
@@ -33,15 +32,16 @@ def ra_dec_data(n= 2945,filename = 'logs/cvastrophoto_guidelog_20200614T020302.t
           pulse_dir[inc,0]= row[10]
           pulse[inc,1]= row[11]
           pulse_dir[inc,1]= row[12]
-          if DITHERING : 
+          if DITHERING and DITHER_SECTION : 
             dither[inc] = 1
           inc+=1 
-        if 'DITHER' in row[0]:
+        if 'INFO: DITHER' in row[0]:
           DITHER_SECTION = True
-        if 'Settling started' in row[0]:
+        if 'INFO: Settling started' in row[0]:
           DITHERING = True
-        if 'Settling complete' in row[0]:
+        if 'INFO: Settling complete' in row[0]:
           DITHERING = False
+          DITHER_SECTION = False
         if row[0]=='Frame':
           print("guiding section ... ")
           GUIDING_SECTION=True
@@ -74,20 +74,19 @@ def ra_dec_data(n= 2945,filename = 'logs/cvastrophoto_guidelog_20200614T020302.t
   data_ra = rasecperpixel * guiding_data[:,0]
   data_dec = decsecperpixel * guiding_data[:,1]
   if plot: 
-    pyplot.subplot(3,1,1)
+    pyplot.subplot(4,1,1)
     pyplot.plot(pulse_ra)
     pyplot.plot(pulse_dec)
-    pyplot.subplot(3,1,2)
-    pyplot.plot(time,10*dither)
-    pyplot.plot(time,data_ra ,'ro')
-    pyplot.subplot(3,1,3)
-    pyplot.plot(time,10*dither)
-    pyplot.plot(time,data_dec,'ro')
+    pyplot.subplot(4,1,2)
+    pyplot.plot(10*dither)
+    pyplot.subplot(4,1,3)
+    pyplot.plot(data_ra )
+    pyplot.subplot(4,1,4)
+    pyplot.plot(data_dec)
     pyplot.show()      
 
   return time, dither, pulse_ra, pulse_dec, data_ra, data_dec
-def pulse_log(filename):
-    HEADER = 9
+def pulse_log(filename, HEADER):
     inc= 0
     keys =[]
     pulse_dict = defaultdict(list)
@@ -119,11 +118,9 @@ def directions(pew,pns):
 def ak(x,u):
   return x - u
 
-def pulse_guide():
-    guide_file = "logs/cvastrophoto_guidelog_20201030T043254.txt"       
-    pulse_file = "logs/cvastrophoto_pulselog_20201030T043254.txt"
-    guide_time, dither,  ur, ud, xr, xd = ra_dec_data(2854,guide_file,plot=False)
-    pulse_dict , pulse_time, pr,pd = pulse_log(pulse_file)
+def pulse_guide(guide_file, pulse_file, n_guide_file, header):
+    guide_time, dither,  ur, ud, xr, xd = ra_dec_data(n_guide_file,guide_file,plot=True)
+    pulse_dict , pulse_time, pr,pd = pulse_log(pulse_file,header)
 
     npulse= pulse_time.shape[0]
     nguide = guide_time.shape[0]

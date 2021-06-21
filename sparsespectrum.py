@@ -6,12 +6,32 @@ from scipy.signal import welch
 
 
 lower_bound = int(sys.argv[1])
-upper_bound = int(sys.argv[2])
-index ,data = phdcsv.pulse_guide()
-time = data[lower_bound:upper_bound,0]
+"""
+Lambda centauri:
+
+guide_file = "logs/cvastrophoto_guidelog_20210612T202456.txt"       
+pulse_file = "logs/cvastrophoto_pulselog_20210612T202456.txt"
+n= 6000
+header= 10
+"""
+
+guide_file = "logs/cvastrophoto_guidelog_20201030T043254.txt"
+pulse_file = "logs/cvastrophoto_pulselog_20201030T043254.txt"
+n = 3000
+header = 10
+
+index ,data = phdcsv.pulse_guide(guide_file, pulse_file,n, header)
+total = len(data)
+value = int(sys.argv[2])
+upper_bound = total if value == 0 else value
+time = data[lower_bound:upper_bound,index['time']]
+
+dither = data[lower_bound:upper_bound, index['dither']]
+
 #right_assention 
-pulse_ra = data[lower_bound:upper_bound,1]
-pointing_err_ra = data[lower_bound:upper_bound, 3] * 1000
+pulse_ra = data[lower_bound:upper_bound,index['pr']] 
+pulse_ra *= 1- dither
+pointing_err_ra = data[lower_bound:upper_bound, index['xr']] * 1000
 # accumulated gear error at time i 
 # measure pointning error at time i + the cumulative sum of the controling error from 0 to i
 n = len(pulse_ra)
@@ -24,15 +44,18 @@ for i in range(n):
     accumulated_gear_error_ra[i] =  pointing_err_ra[i] + cumsum
 
 plt.plot(accumulated_gear_error_ra)
-plt.savefig('accumulated_gear_error')
+plt.show()
 
-frequency = 1. / np.mean(time)
-# welch method for approximation of the power spectrum 
-f, Pxx_den = welch(accumulated_gear_error_ra, frequency)
-plt.ylim([1, 1e4])
-plt.xlim([1,400])
-plt.semilogy(f, Pxx_den)
-plt.savefig('freq_accumulated_gear_error')
+fft_err = np.fft.fft(accumulated_gear_error_ra)
+freq = np.fft.fftfreq(n,min(time))
+half_n = n//2
+fft_err_half = (2.0 / n) * fft_err[:half_n]
+freq_half = freq[:half_n]
+
+plt.plot(freq_half, np.abs(fft_err_half))
+plt.xlabel("Frequency (Hz)")
+plt.ylabel("Amplitude")
+plt.show()
 
 
 
