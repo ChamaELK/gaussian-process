@@ -8,6 +8,8 @@ from scipy.linalg import cholesky, cho_solve, det
 from scipy.optimize import minimize
 import pandas as pd
 from numpy.linalg import norm
+from scipy.stats import variation
+from scipy import signal
 lower_bound = int(sys.argv[1])
 """
 Lambda centauri:
@@ -41,7 +43,7 @@ dither = data[lower_bound:upper_bound, index['dither']]
 #right_assention 
 pulse_ra = data[lower_bound:upper_bound,index['pr']] 
 pulse_ra *= 1- dither
-pointing_err_ra = data[lower_bound:upper_bound, index['xr']] * 1000
+pointing_err_ra = (1-dither)*data[lower_bound:upper_bound, index['xr']] * 1000
 # accumulated gear error at time i 
 # measure pointning error at time i + the cumulative sum of the controling error from 0 to i
 n = len(pulse_ra)
@@ -50,14 +52,17 @@ accumulated_gear_error_ra = np.zeros(n, dtype= np.float)
 for i in range(n):
     cumsum = 0 
     for j in range(i):
-        cumsum += pulse_ra[j]
-    accumulated_gear_error_ra[i] =  pointing_err_ra[i] + cumsum
+            cumsum += pulse_ra[j]
+            accumulated_gear_error_ra[i] =  pointing_err_ra[i] + cumsum
 
 
 
-plt.plot(accumulated_gear_error_ra)
-plt.savefig("fft_denoise/cumul.jpeg")
-plt.clf()
+#plt.plot(accumulated_gear_error_ra)
+#plt.plot(pulse_ra)
+#plt.plot(500*dither)
+#plt.show()
+#plt.savefig("fft_denoise/cumul.jpeg")
+#plt.clf()
 # power spectrum
 post_dc= 5
 ps_err = np.fft.fft(accumulated_gear_error_ra)**2
@@ -90,6 +95,7 @@ print(normal_cutoff)
 b, a = butter(order, normal_cutoff, btype='low', analog=False)
 y = filtfilt(b, a, detrend(accumulated_gear_error_ra))
 
+
 plt.plot(detrend(accumulated_gear_error_ra))
 plt.plot(y,color='red')
 plt.savefig("fft_denoise/butterworth.jpeg")
@@ -97,14 +103,33 @@ plt.clf()
 
 f_y , welch_y = welch(y , fs=1/min(time), window='hann', nperseg= 512, return_onesided=True)
 
-
-f_welch_err = np.vstack([f,welch_err])    
-
+#plt.plot(f_y, welch_y)
+#plt.show()
+#f_welch_err = np.vstack([f,welch_err])    
+#sr0 = f_y[welch_y.argsort()[-4:]]
+#sr0.sort()
+#print(sr0)
 #sr0 = f[:40]
-sr0 = np.array([0.18,0.24,0.5])
-m= 3#len(sr0)
-print("m :")
-print(m)
+#sr0 = np.array([0.18,0.24,0.5])
+#m= len(sr0)
+
+def acf(x):
+    length = len(x)
+    return np.array([1]+[np.corrcoef(x[:-i], x[i:])[0,1]  \
+        for i in range(1, length)])
+
+def butter_highpass(cutoff, fs, order=5):
+    nyq = 0.5 * fs
+    normal_cutoff = cutoff / nyq
+    b, a = signal.butter(order, normal_cutoff, btype='high', analog=False)
+    return b, a
+
+def butter_highpass_filter(data, cutoff, fs, order=5):
+    b, a = butter_highpass(cutoff, fs, order=order)
+    y = signal.filtfilt(b, a, data)
+    return y
+
+
 
 def trigonometric(x,sr):
     m = len(sr)
@@ -126,7 +151,7 @@ def design_matrix(x,s):
 def matrixA(train_input , s , sig_n , sig_0):
     m = len(s)
     Gf = design_matrix(train_input,s)
-    return Gf.T@Gf + m * sig_n**2 / sig_0**2 * np.identity(2*m)
+    return Gf.T@Gf + (m * sig_n**2 / sig_0**2 * np.identity(2*m))
 
 def gp_ll(train_input, train_output, parameters):
     sig_n = parameters[-2]
@@ -160,39 +185,52 @@ def reporter(p):
     p_sig_n.append(p[-2])
     p_sig_0.append(p[-1])
 
+def variance_signal(data):
+    return math.sqrt(np.var(butter_highpass_filter(data, 2.4e-10,1/min(time)), ddof=1 ))
 
+
+pf ,pwelch = welch(acf(detrend(accumulated_gear_error_ra)) , fs=1/min(time), window='hann', nperseg= 256, return_onesided=True)
+sr0 = pf[pwelch.argsort()[-15:]]
+sr0.sort()
+m= len(sr0)
 n = 1200
 data = detrend(accumulated_gear_error_ra)
-NP=600
+NP=300
 prediction_inputs = time[n+1:n+NP+1]
 m_prediction = np.zeros(NP)
 v_prediction =np.zeros(NP)
-#init 
-sig_n = 300#welch_err[0]
-sig_0 = 50#np.mean(welch_err[3*m//4:m])
-start = np.append(sr0,[sig_n,sig_0])
+
+
+sig_0 = 35
+first = True
 for i in range(NP):
     train_output = data[i:n+i]
     train_input = time[i:n+i]
+    sig_n =  math.sqrt(np.var(butter_highpass_filter(train_output, 2.4e-10,1/min(time)), ddof=1 ))
     #prediction_input = time[n+i+1]
-    f= lambda params : gp_ll(train_input, train_output, params)
-    parameters= start
-    p_sig_n = [sig_n]
-    p_sig_0 = [sig_0]
-    result = minimize(f,start,options= {"maxiter":50},callback=reporter, method="L-BFGS-B")
-    parameters = result.x
-    logl = result.fun
-    sig_n = parameters[-2]
-    sig_0 = parameters[-1]
-    sr_min = parameters[:-2]
+    if first : 
+        f= lambda params : gp_ll(train_input, train_output, params)
+        start = np.append(sr0,[sig_n,sig_0])
+        parameters= start
+        p_sig_n = [sig_n]
+        p_sig_0 = [sig_0]
+        result = minimize(f,start,options= {"maxiter":50},callback=reporter, method="L-BFGS-B")
+        parameters = result.x
+        logl = result.fun
+        sig_n = parameters[-2]
+        sig_0 = parameters[-1]
+        sr_min = parameters[:-2]
+    first = False
     m_prediction[i], v_prediction[i] = gp_prediction(prediction_inputs[i], train_input, train_output, sr_min, sig_n, sig_0)
 
-uncertainty = 1.96 * np.sqrt(np.diag(v_prediction))
+uncertainty = v_prediction
+
 plt.plot(time[0:n+NP],data[0:n+NP])
 plt.plot(prediction_inputs, m_prediction,color='green')
 #for i in range(NP):
-#    plt.fill_between(prediction_inputs[i],m_prediction[i]+uncertainty[i], m_prediction[i]- uncertainty[i], alpha=0.1)
+plt.fill_between(prediction_inputs,m_prediction+uncertainty, m_prediction- uncertainty)
 plt.show()
+
 #plt.savefig('fft_denoise/prediction.png')
 #plt.clf()
 
