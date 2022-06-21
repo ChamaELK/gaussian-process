@@ -1,5 +1,6 @@
 import phdcsv
 import sys
+import time as time_m
 import numpy as np
 from matplotlib import pyplot as plt
 from scipy.signal import welch, detrend, butter,filtfilt, normalize
@@ -10,7 +11,12 @@ import pandas as pd
 from numpy.linalg import norm
 from scipy.stats import variation
 from scipy import signal
-lower_bound = int(sys.argv[1])
+
+#colinder 
+guide_file = "logs/cvastrophoto_guidelog_20220523T051128.txt"
+pulse_file = "logs/cvastrophoto_pulselog_20220523T051128.txt"
+n= 7695
+header=10
 """
 Lambda centauri:
 
@@ -19,12 +25,19 @@ pulse_file = "logs/cvastrophoto_pulselog_20210612T202456.txt"
 n= 6000
 header= 10
 """
+"""
 pulse_file = "logs/cvastrophoto_pulselog_20210703T014040.txt"
 guide_file = "logs/cvastrophoto_guidelog_20210703T014040.txt"
 n=8579 
 header = 10
-
-
+"""
+"""
+# ioptron cem40
+pulse_file = "logs/cvastrophoto_pulselog_20210801T170519.txt"
+guide_file = "logs/cvastrophoto_guidelog_20210801T170519.txt"
+n = 5749 
+header =10
+"""
 """
 # python3 sparsespectrum.py 1200 0 
 guide_file = "logs/cvastrophoto_guidelog_20201030T043254.txt"
@@ -32,31 +45,37 @@ pulse_file = "logs/cvastrophoto_pulselog_20201030T043254.txt"
 n = 3000
 header = 10
 """
-index ,data = phdcsv.pulse_guide(guide_file, pulse_file,n, header)
-total = len(data)
-value = int(sys.argv[2])
-upper_bound = total if value == 0 else value
-time = data[lower_bound:upper_bound,index['time']]
+guide_time, dither,  ur, ud, xr, xd = phdcsv.ra_dec_data(n,guide_file,plot=False)
+pulse_time, pr,pd = phdcsv.pulse_log(pulse_file,header)
 
-dither = data[lower_bound:upper_bound, index['dither']]
+lower_bound = 3100
+upper_bound = 4100
 
-#right_assention 
-pulse_ra = data[lower_bound:upper_bound,index['pr']] 
-pulse_ra *= 1- dither
-pointing_err_ra = (1-dither)*data[lower_bound:upper_bound, index['xr']] * 1000
-# accumulated gear error at time i 
-# measure pointning error at time i + the cumulative sum of the controling error from 0 to i
-n = len(pulse_ra)
-accumulated_gear_error_ra = np.zeros(n, dtype= np.float)
+time = guide_time[lower_bound:upper_bound]
+tresh = 0.6
 
-for i in range(n):
-    cumsum = 0 
-    for j in range(i):
-            cumsum += pulse_ra[j]
-            accumulated_gear_error_ra[i] =  pointing_err_ra[i] + cumsum
+_xr = np.zeros(upper_bound-lower_bound)
+
+for i in range(upper_bound-lower_bound):
+  if dither[lower_bound +i] == 0 and abs(xr[lower_bound +i]) < tresh:
+    _xr[i] = xr[lower_bound +i]
+  if dither[lower_bound +i] == 1:
+    _xr[i] = np.nan
 
 
+pointing_err_ra = np.nan_to_num(_xr)
+pulse_lower_bound_0 = np.max(np.where(pulse_time<= guide_time[lower_bound+1]))
+current_lower_bound = pulse_lower_bound_0
+cumsum_pulse= []
 
+for i in range(upper_bound -lower_bound-1):
+  _next =0
+  while pulse_time[current_lower_bound +_next] <= guide_time[i+1] :
+    _next += 1
+  cumsum_pulse.append(sum(pr[pulse_lower_bound_0 : (current_lower_bound +_next)]) + pointing_err_ra[i+1])
+  current_lower_bound += _next
+
+accumulated_gear_error_ra = np.array(cumsum_pulse)
 #plt.plot(accumulated_gear_error_ra)
 #plt.plot(pulse_ra)
 #plt.plot(500*dither)
@@ -71,11 +90,11 @@ half_n = n//2
 ps_err_half = (2.0 / n) * ps_err[post_dc:half_n]
 freq_half = freq[post_dc:half_n]
 
-plt.plot(freq_half, np.abs(ps_err_half))
-plt.xlabel("Frequency (Hz)")
-plt.ylabel("Power spectrum")
-plt.savefig("fft_denoise/ps.jpeg")
-plt.clf()
+#plt.plot(freq_half, np.abs(ps_err_half))
+#plt.xlabel("Frequency (Hz)")
+#plt.ylabel("Power spectrum")
+#plt.savefig("fft_denoise/ps.jpeg")
+#plt.clf()
 
 # spectral density using welch 
 f , welch_err = welch(detrend(accumulated_gear_error_ra) , fs=1/min(time), window='hann', nperseg= 256, return_onesided=True)
@@ -188,47 +207,47 @@ def reporter(p):
 def variance_signal(data):
     return math.sqrt(np.var(butter_highpass_filter(data, 2.4e-10,1/min(time)), ddof=1 ))
 
+# RADriftSpeed	DECDriftSpeed
 
-pf ,pwelch = welch(acf(detrend(accumulated_gear_error_ra)) , fs=1/min(time), window='hann', nperseg= 256, return_onesided=True)
-sr0 = pf[pwelch.argsort()[-15:]]
-sr0.sort()
-m= len(sr0)
-n = 1200
-data = detrend(accumulated_gear_error_ra)
-NP=300
-prediction_inputs = time[n+1:n+NP+1]
+n = 200
+data = pointing_err_ra
+NP = 200
 m_prediction = np.zeros(NP)
 v_prediction =np.zeros(NP)
-
-
-sig_0 = 35
-first = True
+prediction_inputs= np.zeros(NP)
+frequency_training = 20
 for i in range(NP):
-    train_output = data[i:n+i]
-    train_input = time[i:n+i]
-    sig_n =  math.sqrt(np.var(butter_highpass_filter(train_output, 2.4e-10,1/min(time)), ddof=1 ))
-    #prediction_input = time[n+i+1]
-    if first : 
+    train_output = data[-n-NP+i-1:-NP+i-1]
+    train_input = time[-n-NP+i-1:-NP+i-1]
+    prediction_inputs[i] = time[-NP+i]
+    pf ,pwelch = welch(acf(data[-n-NP+i:-NP+i]) , fs=2, window='hann', nperseg= 256, return_onesided=True)
+    sig_0 = np.sum(pf**2)
+    sr0 = pf[pwelch.argsort()[-20:]]
+    sr0.sort()
+    m= len(sr0)
+    if i%frequency_training == 0:
+        sig_n =  math.sqrt(np.var(butter_highpass_filter(train_output[-50:], 0.4e-10,1/min(time)), ddof=1 ))
+        #prediction_input = time[n+i+1]
+        parameters = np.append(sr0,[sig_n,sig_0])
         f= lambda params : gp_ll(train_input, train_output, params)
-        start = np.append(sr0,[sig_n,sig_0])
-        parameters= start
-        p_sig_n = [sig_n]
-        p_sig_0 = [sig_0]
-        result = minimize(f,start,options= {"maxiter":50},callback=reporter, method="L-BFGS-B")
+        result = minimize(f,parameters,options={"maxiter":1}, method="L-BFGS-B")
         parameters = result.x
-        logl = result.fun
-        sig_n = parameters[-2]
-        sig_0 = parameters[-1]
-        sr_min = parameters[:-2]
-    first = False
+    p_sig_n = [sig_n]
+    p_sig_0 = [sig_0]
+    logl = result.fun
+    sig_n = parameters[-2]
+    sig_0 = parameters[-1]
+    sr_min = parameters[:-2]
     m_prediction[i], v_prediction[i] = gp_prediction(prediction_inputs[i], train_input, train_output, sr_min, sig_n, sig_0)
+    print(sig_n,sig_0,sr_min,m_prediction[i],v_prediction[i])
 
-uncertainty = v_prediction
-
-plt.plot(time[0:n+NP],data[0:n+NP])
+uncertainty = 0.5* np.sqrt(v_prediction)
+plt.subplot(2,1,1)
+plt.scatter(time[0:n+NP],data[0:n+NP])
+plt.subplot(2,1,2)
 plt.plot(prediction_inputs, m_prediction,color='green')
 #for i in range(NP):
-plt.fill_between(prediction_inputs,m_prediction+uncertainty, m_prediction- uncertainty)
+plt.fill_between(prediction_inputs,m_prediction+uncertainty, m_prediction- uncertainty, alpha=0.1)
 plt.show()
 
 #plt.savefig('fft_denoise/prediction.png')

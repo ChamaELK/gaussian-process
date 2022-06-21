@@ -26,6 +26,7 @@ def ra_dec_data(n= 2945,filename = 'logs/cvastrophoto_guidelog_20200614T020302.t
     for row in phd_reader:
       if row!= []:
         if GUIDING_SECTION and row[0].isdigit():
+          row_dict = dict(zip(guiding_columns, row))
           time[inc] = row[22] 
           guiding_data[inc]= row[5:7]
           pulse[inc,0]=row[9]
@@ -90,25 +91,35 @@ def pulse_log(filename, HEADER):
     inc= 0
     keys =[]
     pulse_dict = defaultdict(list)
+
+    i=0
+    header=  []
+    time = []  
+    ra = []
+    dec = []
+    ew = []
+    ns = []
+
     with open(filename) as csvfile:
         pulse_reader= csv.reader(csvfile)
         for row in pulse_reader:
-            if row!=[]:
-                if inc == HEADER :
-                    keys = row
-                if inc > HEADER : 
-                    for k,r in zip(keys,row):
-                        pulse_dict[k].append(r)
-            inc+=1
-    time = np.array(pulse_dict["AbsTime"]).astype(float)
-    raduration = np.array(pulse_dict["RADuration"]).astype(float)
-    pew=  np.array(pulse_dict["RADirection"])
-    decduration = np.array(pulse_dict["DECDuration"]).astype(float)
-    pns =  np.array(pulse_dict["DECDirection"]) 
-    ew,ns = directions(pew,pns)
-    ra = np.multiply(raduration,ew)
-    dec = np.multiply(decduration,ns)
-    return pulse_dict, time, ra, dec
+            if i==9 :
+                header = row
+            if i>9 and  row[0].count(".") ==1 and row[0].replace(".", "").isdigit():
+                time.append(float(row[header.index('AbsTime')]))
+                raduration = float(row[header.index('RADuration')])
+                pew = row[header.index('RADirection')] 
+                pns = row[header.index('DECDirection')]
+                ewi = (pew == 'E') + (pew == 'W')* (-1)
+                nsi = (pns == 'N') + (pns == 'S')* (-1) 
+                decduration = float(row[header.index('DECDuration')])
+                ew.append(ewi)
+                ns.append(nsi)
+                ra.append(ewi*raduration)
+                dec.append(nsi*decduration)
+            i=i+1
+            
+    return np.array(time), np.array(ra), np.array(dec)
 
 def directions(pew,pns):
     ew = (pew == 'E') + (pew == 'W')* (-1)
@@ -120,7 +131,7 @@ def ak(x,u):
 
 def pulse_guide(guide_file, pulse_file, n_guide_file, header):
     guide_time, dither,  ur, ud, xr, xd = ra_dec_data(n_guide_file,guide_file,plot=True)
-    pulse_dict , pulse_time, pr,pd = pulse_log(pulse_file,header)
+    pulse_time, pr,pd = pulse_log(pulse_file,header)
 
     npulse= pulse_time.shape[0]
     nguide = guide_time.shape[0]
